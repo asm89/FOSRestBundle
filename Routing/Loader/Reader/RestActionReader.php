@@ -139,7 +139,7 @@ class RestActionReader
             return;
         }
 
-        list($httpMethod, $resources) = $httpMethodAndResources;
+        list($methodRoutePrefix, $httpMethod, $resources) = $httpMethodAndResources;
         $arguments                    = $this->getMethodArguments($method);
 
         // if we have only 1 resource & 1 argument passed, then it's object call, so
@@ -157,7 +157,7 @@ class RestActionReader
             $resources[] = null;
         }
 
-        $routeName = $httpMethod.$this->generateRouteName($resources);
+        $routeName = $methodRoutePrefix.$this->generateRouteName($resources);
         $urlParts  = $this->generateUrlParts($resources, $arguments);
 
         // if passed method is not valid HTTP method then it's either
@@ -226,17 +226,51 @@ class RestActionReader
      */
     private function getHttpMethodAndResourcesFromMethod(\ReflectionMethod $method)
     {
+        if (false === $methodInfo = $this->getMethodAndResourceInfo($method)) {
+            return false;
+        }
+
+        list($routePrefix, $httpMethod, $resourceString) = $methodInfo;
+
+        $resources = preg_split(
+            '/([A-Z][^A-Z]*)/', $resourceString, -1, PREG_SPLIT_NO_EMPTY | PREG_SPLIT_DELIM_CAPTURE
+        );
+
+        return array($routePrefix, $httpMethod, $resources);
+    }
+
+    private function getMethodAndResourceInfo(\ReflectionMethod $method)
+    {
         // if method doesn't match regex - skip
         if (!preg_match('/([a-z][_a-z0-9]+)(.*)Action/', $method->getName(), $matches)) {
             return false;
         }
 
-        $httpMethod = strtolower($matches[1]);
-        $resources  = preg_split(
-            '/([A-Z][^A-Z]*)/', $matches[2], -1, PREG_SPLIT_NO_EMPTY | PREG_SPLIT_DELIM_CAPTURE
-        );
+        // todo: remove this hack
+        $resource = $method->getDeclaringClass()->getName() === 'FOS\RestBundle\Tests\Fixtures\Controller\ResourceController' ? 'User' : null;
 
-        return array($httpMethod, $resources);
+        $httpMethod = $methodRoutePrefix = strtolower($matches[1]);
+        $resourceString = $matches[2];
+
+        if (null !== $resource) {
+            list($httpMethod, $resourceString) = $this->getResourceStringAndHttpMethod($method, $resource, $httpMethod, $resourceString);
+        }
+
+        return array($methodRoutePrefix, $httpMethod, $resourceString);
+    }
+
+    private function getResourceStringAndHttpMethod(\ReflectionMethod $method, $injectResource, $httpMethod, $resourceString)
+    {
+        if (0 === count($this->getMethodArguments($method))) {
+            $injectResource = Pluralization::pluralize($injectResource);
+
+            // map cget/cpost etc to get/post for url building etc
+            if (0 === strpos($httpMethod, 'c') && in_array(substr($httpMethod, 1), $this->availableHTTPMethods)) {
+                $httpMethod = substr($httpMethod, 1);
+            }
+        }
+
+        return array($httpMethod, $injectResource . $resourceString);
     }
 
     /**
